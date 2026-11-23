@@ -63,7 +63,7 @@ jobs:
                         file="probe-$leg.log"
                         case $leg in bug) expected='NaN is written first' ;; *) expected='no NaN is written' ;; esac
                         if grep -q "C18 PROBE RESULT leg=$leg ok=True" "$file" 2>/dev/null; then result=PASS; else result=FAIL; failed=1; fi
-                        observed=$(grep -o 'writes=\[[^]]\{0,40\}' "$file" 2>/dev/null | head -2 | paste -sd ' ' - || true)
+                        observed=$(grep -o 'nanFirst=[0-9]*/[0-9]*' "$file" 2>/dev/null | head -2 | paste -sd ' ' - || true)
                         echo "| $leg | $expected | ${observed:-no marker: the probe did not run} | $result |" >> "$GITHUB_STEP_SUMMARY"
                     done
                     exit $failed
@@ -85,7 +85,7 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                runtime: [coreclr, mono]
+                runtime: [coreclr]
         steps:
             -   name: Checkout code
                 uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -123,7 +123,7 @@ jobs:
                 run: dotnet workload install maui-android --version ${{ steps.dotnet-root.outputs.workload-version }}
 
             -   name: Build the app (Release, ${{ matrix.runtime }})
-                run: dotnet build src/C18Repro/C18Repro.csproj -c Release -p:ReproRuntime=${{ matrix.runtime }}
+                run: dotnet build src/C18Repro/C18Repro.csproj -c Release
 
             -   name: Setup KVM
                 run: |

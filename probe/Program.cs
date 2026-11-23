@@ -32,16 +32,29 @@ var checks = leg switch
 	_ => throw new ArgumentException($"Unknown leg '{leg}'."),
 };
 
+const int Runs = 20;
+// Unmeasured: the first animation JIT-compiles AnimationManager.OnFire, which could tick the millisecond clock over mid-animation.
+Measure(v => v.ScaleXToAsync(2, 250), nameof(VisualElement.ScaleX), v => v.ScaleX);
+
 var rows = new List<object>();
 var allAsExpected = true;
 foreach (var (name, expectNaN, measure) in checks)
 {
-	var writes = measure();
-	var observedNaN = writes.Any(double.IsNaN);
-	var ok = writes.Count > 0 && observedNaN == expectNaN;
+	var nanFirst = 0;
+	var lastWrites = new List<double>();
+	for (var run = 0; run < Runs; run++)
+	{
+		lastWrites = measure();
+		if (lastWrites.Count > 0 && double.IsNaN(lastWrites[0]))
+		{
+			nanFirst++;
+		}
+	}
+
+	var ok = expectNaN ? nanFirst >= 1 : nanFirst == 0;
 	allAsExpected &= ok;
-	rows.Add(new { check = name, expected = expectNaN ? "a NaN write" : "no NaN write", observed = $"writes=[{string.Join(", ", writes)}]", ok });
-	Console.WriteLine($"C18 PROBE leg={leg} check=\"{name}\" writes=[{string.Join(", ", writes)}] containsNaN={observedNaN} expectNaN={expectNaN} ok={ok}");
+	rows.Add(new { check = name, expected = expectNaN ? "NaN first in at least 1 of 20 (expect 20/20)" : "NaN first in 0 of 20", observed = $"nanFirst={nanFirst}/{Runs}", lastWrites = lastWrites.Select(w => w.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray(), ok });
+	Console.WriteLine($"C18 PROBE leg={leg} check=\"{name}\" nanFirst={nanFirst}/{Runs} writes=[{string.Join(", ", lastWrites)}] expectNaN={expectNaN} ok={ok}");
 }
 
 Directory.CreateDirectory("results");

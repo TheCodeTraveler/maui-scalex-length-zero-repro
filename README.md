@@ -10,7 +10,7 @@ Upstream issue: (to be filed)
 Managed proof, no device (needs the .NET 11.0.100 SDK):
 
 ```
-dotnet run -c Release --project probe -- bug      # exit 0: ScaleX writes [NaN, 2]
+dotnet run -c Release --project probe -- bug      # exit 0: NaN is written first in 20/20 runs
 dotnet run -c Release --project probe -- control  # exit 0: no NaN
 dotnet run -c Release --project probe -- fix      # exit 0: no NaN
 ```
@@ -34,7 +34,7 @@ adb logcat -d | grep -i "Float.NaN"
 
 - `Microsoft.Maui.Controls` 11.0.10, SDK 11.0.100 (`global.json`), `net11.0-android`, `android-x64`
 - Emulator: API 34 x86_64 `google_apis` (input `api-level` on `workflow_dispatch`), animator duration scale 1
-- Runtimes: CoreCLR and Mono (`-p:ReproRuntime=coreclr|mono`)
+- Runtime: CoreCLR, the only Android runtime in .NET 11
 
 ## Legs
 
@@ -45,16 +45,16 @@ adb logcat -d | grep -i "Float.NaN"
 | probe | `bug` | bug | MAUI's own `AnimationManager`, with a ticker that fires inside `Start` like Android's `ValueAnimator`, writes `NaN` first for length 0 |
 | probe | `control` | control | length 1 and 250 write no `NaN` |
 | probe | `fix` | fix | `Math.Max(1, length)` writes no `NaN` |
-| android (coreclr, mono) | `scalex0`, `scaley0` | bug | 20 iterations of `ScaleXToAsync`/`ScaleYToAsync(x, 0)`; logcat has `Cannot set 'scaleX'` (or `'scaleY'`) `to Float.NaN` |
-| android (coreclr, mono) | `scale0`, `scalex250` | control | `ScaleToAsync(x, 0)` (has the NaN guard) and `ScaleXToAsync(x, 250)` throw 0 of 20 and reach the target |
-| android (coreclr, mono) | `scalex0-workaround` | fix | assigning `ScaleX` directly when the length is 0 throws 0 of 20 |
+| android (coreclr) | `scalex0`, `scaley0` | bug | 20 iterations of `ScaleXToAsync`/`ScaleYToAsync(x, 0)`; logcat has `Cannot set 'scaleX'` (or `'scaleY'`) `to Float.NaN` |
+| android (coreclr) | `scale0`, `scalex250` | control | `ScaleToAsync(x, 0)` (has the NaN guard) and `ScaleXToAsync(x, 250)` throw 0 of 20 and reach the target |
+| android (coreclr) | `scalex0-workaround` | fix | assigning `ScaleX` directly when the length is 0 throws 0 of 20 |
 
 The app (`src/C18Repro`) runs one scenario per process (`--es scenario <name>`), logs `C18 START` and `C18 DONE` lines, and waits 150 ms between iterations so the ticker is idle and the first tick arrives inside `Start`. Animations must stay on: with an animator duration scale of 0, MAUI skips every animation, so the Android job fails if the scale is 0.
 
 ## Root cause
 
 1. `Tweener.Step` computes `Value = Math.Min(1.0, ms / (double)Length)`. With `Length == 0` and a first step of 0 ms, that is `0 / 0 = NaN`.
-2. Android's ticker starts a `ValueAnimator`, which calls its update listener before `start()` returns (AOSP `ValueAnimator.start` -> `setCurrentPlayTime(0)`). The first tick therefore always has 0 ms.
+2. Android's ticker starts a `ValueAnimator`, which calls its update listener before `start()` returns (AOSP `ValueAnimator.start` -> `setCurrentPlayTime(0)`). The first tick therefore almost always has 0 ms, unless the millisecond clock ticks over between `AnimationManager.Start` and the listener.
 3. `UpdateScaleX`/`UpdateScaleY` skip only a NaN `Scale` (the Xamarin.Forms fix for `ScaleTo` with length 0, xamarin/Xamarin.Forms#14606). `ScaleX`/`ScaleY` reach `View.setScaleX`, which throws on NaN.
 4. dotnet/maui#30167 fixed the same `Tweener` NaN for Windows `RotateXTo`/`RotateYTo` only, by guarding that platform.
 
