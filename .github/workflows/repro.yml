@@ -45,8 +45,8 @@ jobs:
             -   name: Run the control leg (length 1 and 250 must not write NaN)
                 run: dotnet run --no-build -c Release --project probe -- control | tee probe-control.log
 
-            -   name: Run the fix leg (length Math.Max(1, 0) must not write NaN)
-                run: dotnet run --no-build -c Release --project probe -- fix | tee probe-fix.log
+            -   name: Run the workaround leg (length Math.Max(1, 0) must not write NaN)
+                run: dotnet run --no-build -c Release --project probe -- workaround | tee probe-workaround.log
 
             -   name: Assert every probe leg and write the summary
                 if: always()
@@ -59,7 +59,7 @@ jobs:
                         echo '|---|---|---|---|'
                     } >> "$GITHUB_STEP_SUMMARY"
                     failed=0
-                    for leg in bug control fix; do
+                    for leg in bug control workaround; do
                         file="probe-$leg.log"
                         case $leg in bug) expected='NaN is written first' ;; *) expected='no NaN is written' ;; esac
                         if grep -q "C18 PROBE RESULT leg=$leg ok=True" "$file" 2>/dev/null; then result=PASS; else result=FAIL; failed=1; fi

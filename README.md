@@ -12,7 +12,7 @@ Managed proof, no device (needs the .NET 11.0.100 SDK):
 ```
 dotnet run -c Release --project probe -- bug      # exit 0: NaN is written first in 20/20 runs
 dotnet run -c Release --project probe -- control  # exit 0: no NaN
-dotnet run -c Release --project probe -- fix      # exit 0: no NaN
+dotnet run -c Release --project probe -- workaround      # exit 0: no NaN
 ```
 
 On Android (needs the `maui-android` workload and an emulator with animations on):
@@ -27,8 +27,8 @@ adb logcat -d | grep -i "Float.NaN"
 ## Observed vs expected
 
 - Observed: `view.ScaleXToAsync(x, 0)` throws `Cannot set 'scaleX' to Float.NaN`, as does `ScaleYToAsync` (`scaleY`).
-- Expected: a length of 0 completes immediately at the target value, as `ScaleToAsync(x, 0)` already does.
-- The same NaN frame is also written by `RotateToAsync`, `FadeToAsync` and `TranslateToAsync` with length 0. Android accepts it for those properties, so nothing throws.
+- Expected: a length of 0 sets the target value without throwing.
+- `ScaleToAsync`, `RotateToAsync`, `FadeToAsync` and `TranslateToAsync` with length 0 write the same NaN frame. Nothing throws: MAUI skips a NaN `Scale`, and Android accepts a NaN rotation, alpha or translation.
 
 ## Versions
 
@@ -38,16 +38,16 @@ adb logcat -d | grep -i "Float.NaN"
 
 ## Legs
 
-[`.github/workflows/repro.yml`](.github/workflows/repro.yml) is green only when every bug leg shows the bug and every control and fix leg is clean. Each leg writes an expected-vs-observed table to the job summary, and a leg whose app did not run fails.
+[`.github/workflows/repro.yml`](.github/workflows/repro.yml) is green only when every bug leg shows the bug and every control and workaround leg is clean. Each leg writes an expected-vs-observed table to the job summary, and a leg whose app did not run fails.
 
 | Job | Cell | Role | Proves |
 |---|---|---|---|
 | probe | `bug` | bug | MAUI's own `AnimationManager`, with a ticker that fires inside `Start` like Android's `ValueAnimator`, writes `NaN` first for length 0 |
 | probe | `control` | control | length 1 and 250 write no `NaN` |
-| probe | `fix` | fix | `Math.Max(1, length)` writes no `NaN` |
+| probe | `workaround` | workaround | `Math.Max(1, length)` writes no `NaN` |
 | android (coreclr) | `scalex0`, `scaley0` | bug | 20 iterations of `ScaleXToAsync`/`ScaleYToAsync(x, 0)`; logcat has `Cannot set 'scaleX'` (or `'scaleY'`) `to Float.NaN` |
 | android (coreclr) | `scale0`, `scalex250` | control | `ScaleToAsync(x, 0)` (has the NaN guard) and `ScaleXToAsync(x, 250)` throw 0 of 20 and reach the target |
-| android (coreclr) | `scalex0-workaround` | fix | assigning `ScaleX` directly when the length is 0 throws 0 of 20 |
+| android (coreclr) | `scalex0-workaround` | workaround | assigning `ScaleX` directly when the length is 0 throws 0 of 20 |
 
 The app (`src/C18Repro`) runs one scenario per process (`--es scenario <name>`), logs `C18 START` and `C18 DONE` lines, and waits 150 ms between iterations so the ticker is idle and the first tick arrives inside `Start`. Animations must stay on: with an animator duration scale of 0, MAUI skips every animation, so the Android job fails if the scale is 0.
 
@@ -63,4 +63,4 @@ The app (`src/C18Repro`) runs one scenario per process (`--es scenario <name>`),
 - In `Tweener.Step`, treat `Length == 0` as complete: `Value = Length == 0 ? 1.0 : Math.Min(1.0, ms / (double)Length)`. This fixes every platform and every property.
 - Also, in Android `UpdateScaleX`/`UpdateScaleY`, skip a value that is not finite (`float.IsFinite`), next to the existing NaN check.
 
-The fix needs a change inside MAUI. From user code, the workaround is to avoid a length of 0 (assign the property directly, or use a length of 1 or more), which the fix legs show.
+The fix needs a change inside MAUI. From user code, the workaround is to avoid a length of 0 (assign the property directly, or use a length of 1 or more), which the workaround legs show.

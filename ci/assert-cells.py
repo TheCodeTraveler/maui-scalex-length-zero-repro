@@ -1,20 +1,15 @@
-"""Compares each cell's logcat with its expectation, writes a Markdown table to stdout and exits 1 on any mismatch.
-
-usage: assert-cells.py <runtime> <cells-dir>
-"""
 import re
 import sys
 from pathlib import Path
 
 runtime, cells = sys.argv[1], Path(sys.argv[2])
 
-# scenario -> (role, the Android message that must (bug) or must not (control, fix) appear)
 CELLS = {
     "scalex0": ("bug", "Cannot set 'scaleX' to Float.NaN"),
     "scaley0": ("bug", "Cannot set 'scaleY' to Float.NaN"),
     "scale0": ("control", "Float.NaN"),
     "scalex250": ("control", "Float.NaN"),
-    "scalex0-workaround": ("fix", "Float.NaN"),
+    "scalex0-workaround": ("workaround", "Float.NaN"),
 }
 
 rows, failures = [], 0

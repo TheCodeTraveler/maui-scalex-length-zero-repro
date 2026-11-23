@@ -6,9 +6,7 @@ using Microsoft.Maui.Controls;
 using Microsoft.Maui.Dispatching;
 using Microsoft.Maui.Handlers;
 
-// Usage: dotnet run --project probe -- <bug|control|fix>
-// Exit code 0 means the leg observed what it expects (bug: NaN written; control and fix: no NaN written).
-var leg = args.SingleOrDefault() ?? throw new ArgumentException("Pass one leg: bug, control or fix.");
+var leg = args.SingleOrDefault() ?? throw new ArgumentException("Pass one leg: bug, control or workaround.");
 DispatcherProvider.SetCurrent(new InlineDispatcherProvider());
 
 var checks = leg switch
@@ -23,8 +21,7 @@ var checks = leg switch
 		("ScaleXToAsync(2, length: 1)", false, () => Measure(v => v.ScaleXToAsync(2, 1), nameof(VisualElement.ScaleX), v => v.ScaleX)),
 		("ScaleXToAsync(2, length: 250)", false, () => Measure(v => v.ScaleXToAsync(2, 250), nameof(VisualElement.ScaleX), v => v.ScaleX)),
 	},
-	// The user-code workaround: never let the length reach 0
-	"fix" => new (string, bool, Func<List<double>>)[]
+	"workaround" => new (string, bool, Func<List<double>>)[]
 	{
 		("ScaleXToAsync(2, length: Math.Max(1, 0))", false, () => Measure(v => v.ScaleXToAsync(2, Math.Max(1u, 0u)), nameof(VisualElement.ScaleX), v => v.ScaleX)),
 		("ScaleYToAsync(2, length: Math.Max(1, 0))", false, () => Measure(v => v.ScaleYToAsync(2, Math.Max(1u, 0u)), nameof(VisualElement.ScaleY), v => v.ScaleY)),

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs every cell on the booted emulator, one process per cell. A crash in one cell must never stop the others, so there is no `set -e`.
+# No `set -e`: a crash in one cell must never stop the others.
 set -u -o pipefail
 
 runtime="${1:?usage: run-cells.sh <runtime>}"
@@ -19,7 +19,7 @@ for scenario in scalex0 scaley0 scale0 scalex250 scalex0-workaround; do
     adb logcat -b crash -c
     timeout 60 adb shell am start -W -n "$package/com.example.c18repro.MainActivity" --es scenario "$scenario" > "$folder/am-start.txt" 2>&1
 
-    # Done when the app logs DONE, or when its process is gone (a crash)
+    # A crash never logs DONE, so a gone process also ends the wait.
     waited=0
     while [ "$waited" -lt 120 ]; do
         adb logcat -d -s C18:I | grep -q 'C18 DONE' && break

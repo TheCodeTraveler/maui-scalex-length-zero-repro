@@ -4,8 +4,7 @@ using Android.Util;
 
 namespace C18Repro;
 
-// Runs one scenario, chosen by `am start --es scenario <name>`, then logs a DONE line. Every line carries the "C18" tag.
-// Scenarios: scalex0, scaley0 (the bug), scale0, scalex250 (controls), scalex0-workaround (the fix).
+// One scenario per process, so a crash in one cell cannot hide another cell's result.
 public class ProbePage : ContentPage
 {
 	const string Tag = "C18";
