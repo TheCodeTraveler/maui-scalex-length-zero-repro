@@ -1,0 +1,177 @@
+name: Repro
+
+on:
+    push:
+        branches: [main]
+    workflow_dispatch:
+        inputs:
+            api-level:
+                description: Android API level of the emulator
+                type: number
+                default: 34
+
+permissions:
+    contents: read
+
+concurrency:
+    group: repro-${{ github.ref }}
+    cancel-in-progress: true
+
+env:
+    DOTNET_NOLOGO: 'true'
+    DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+    API_LEVEL: ${{ inputs.api-level || '34' }}
+
+jobs:
+    probe:
+        name: probe (managed, no device)
+        runs-on: ubuntu-24.04
+        timeout-minutes: 20
+        steps:
+            -   name: Checkout code
+                uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            -   name: Setup .NET SDK
+                uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+                with:
+                    global-json-file: global.json
+
+            -   name: Restore and Build the probe
+                run: dotnet build probe/Probe.csproj -c Release
+
+            -   name: Run the bug leg (length 0 must write NaN)
+                run: dotnet run --no-build -c Release --project probe -- bug | tee probe-bug.log
+
+            -   name: Run the control leg (length 1 and 250 must not write NaN)
+                run: dotnet run --no-build -c Release --project probe -- control | tee probe-control.log
+
+            -   name: Run the fix leg (length Math.Max(1, 0) must not write NaN)
+                run: dotnet run --no-build -c Release --project probe -- fix | tee probe-fix.log
+
+            -   name: Assert every probe leg and write the summary
+                if: always()
+                shell: bash
+                run: |
+                    {
+                        echo '## Probe (managed, MAUI AnimationManager with a ticker that fires inside Start, like Android ValueAnimator)'
+                        echo
+                        echo '| Leg | Expected | Observed | Result |'
+                        echo '|---|---|---|---|'
+                    } >> "$GITHUB_STEP_SUMMARY"
+                    failed=0
+                    for leg in bug control fix; do
+                        file="probe-$leg.log"
+                        case $leg in bug) expected='NaN is written first' ;; *) expected='no NaN is written' ;; esac
+                        if grep -q "C18 PROBE RESULT leg=$leg ok=True" "$file" 2>/dev/null; then result=PASS; else result=FAIL; failed=1; fi
+                        observed=$(grep -o 'writes=\[[^]]\{0,40\}' "$file" 2>/dev/null | head -2 | paste -sd ' ' - || true)
+                        echo "| $leg | $expected | ${observed:-no marker: the probe did not run} | $result |" >> "$GITHUB_STEP_SUMMARY"
+                    done
+                    exit $failed
+
+            -   name: Upload probe results
+                if: always()
+                uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+                with:
+                    name: results-probe
+                    path: |
+                        probe-*.log
+                        results/
+                    if-no-files-found: warn
+
+    android:
+        name: android (${{ matrix.runtime }})
+        runs-on: ubuntu-24.04
+        timeout-minutes: 75
+        strategy:
+            fail-fast: false
+            matrix:
+                runtime: [coreclr, mono]
+        steps:
+            -   name: Checkout code
+                uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            -   name: Setup .NET SDK
+                uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+                with:
+                    global-json-file: global.json
+
+            -   name: Setup Java
+                uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+                with:
+                    distribution: 'microsoft'
+                    java-version: '21'
+
+            -   name: Setup workload version
+                id: dotnet-root
+                shell: bash
+                run: |
+                    p=$(dirname "$(readlink -f "$(command -v dotnet)")"); echo "path=$p" | tee -a "$GITHUB_OUTPUT"
+                    echo "sdk=$(dotnet --version)" | tee -a "$GITHUB_OUTPUT"
+                    wv=$(dotnet workload search version --take 1); test -n "$wv" || { echo '::error::No workload set found for this SDK band.'; exit 1; }; echo "workload-version=$wv" | tee -a "$GITHUB_OUTPUT"
+
+            -   name: Setup workload cache
+                uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+                with:
+                    path: |
+                        ${{ steps.dotnet-root.outputs.path }}/packs
+                        ${{ steps.dotnet-root.outputs.path }}/sdk-manifests
+                        ${{ steps.dotnet-root.outputs.path }}/metadata/workloads
+                        ${{ steps.dotnet-root.outputs.path }}/template-packs
+                    key: dotnet-workload-maui-android-${{ runner.os }}-${{ runner.arch }}-${{ steps.dotnet-root.outputs.sdk }}-${{ steps.dotnet-root.outputs.workload-version }}
+
+            -   name: Install the MAUI Android workload
+                run: dotnet workload install maui-android --version ${{ steps.dotnet-root.outputs.workload-version }}
+
+            -   name: Build the app (Release, ${{ matrix.runtime }})
+                run: dotnet build src/C18Repro/C18Repro.csproj -c Release -p:ReproRuntime=${{ matrix.runtime }}
+
+            -   name: Setup KVM
+                run: |
+                    echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+                    sudo udevadm control --reload-rules
+                    sudo udevadm trigger --name-match=kvm --settle
+                    if ! { test -r /dev/kvm && test -w /dev/kvm; }; then
+                        echo '::error::/dev/kvm is not usable, so the Android emulator cannot use hardware acceleration.'
+                        exit 1
+                    fi
+
+            # Animations stay ON: with animator_duration_scale 0, MAUI skips every animation and the bug cannot show
+            -   name: Run the cells on an emulator
+                if: ${{ !cancelled() }}
+                timeout-minutes: 45
+                uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+                with:
+                    api-level: ${{ env.API_LEVEL }}
+                    target: google_apis
+                    arch: x86_64
+                    profile: pixel_7_pro
+                    cores: 4
+                    ram-size: 4096M
+                    disk-size: 6000M
+                    force-avd-creation: false
+                    emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+                    disable-animations: false
+                    script: bash ci/run-cells.sh ${{ matrix.runtime }}
+
+            -   name: Assert every cell and write the summary
+                if: always()
+                shell: bash
+                run: |
+                    mkdir -p "artifacts/${{ matrix.runtime }}"
+                    set +e
+                    python3 -I ci/assert-cells.py "${{ matrix.runtime }}" "artifacts/${{ matrix.runtime }}/cells" | tee "artifacts/${{ matrix.runtime }}/summary.md"
+                    code=${PIPESTATUS[0]}
+                    {
+                        echo "## Android ${{ matrix.runtime }} (API ${API_LEVEL})"
+                        echo
+                        cat "artifacts/${{ matrix.runtime }}/summary.md"
+                    } >> "$GITHUB_STEP_SUMMARY"
+                    exit $code
+
+            -   name: Upload results
+                if: always()
+                uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+                with:
+                    name: results-android-${{ matrix.runtime }}
+                    path: artifacts/${{ matrix.runtime }}
+                    if-no-files-found: warn
