@@ -9,7 +9,7 @@ using Microsoft.Maui.Handlers;
 
 var leg = args.SingleOrDefault() ?? throw new ArgumentException("Pass one leg: bug, control, workaround or stuck.");
 DispatcherProvider.SetCurrent(new InlineDispatcherProvider());
-Console.WriteLine($"C18 PROBE controls={typeof(VisualElement).Assembly.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion} runtime={System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
+Console.WriteLine($"C18 PROBE controls={typeof(VisualElement).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion} runtime={System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 
 if (leg == "stuck")
 {

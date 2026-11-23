@@ -33,5 +33,6 @@ for scenario in scalex0 scaley0 scale0 scalex250 scalex0-workaround scalex0-stuc
 
     adb logcat -d > "$folder/logcat.txt"
     adb logcat -d -b crash > "$folder/crash.txt"
+    if [ -z "$(adb shell pidof "$package" | tr -d '\r')" ]; then echo gone > "$folder/process.txt"; else echo alive > "$folder/process.txt"; fi
     adb shell am force-stop "$package"
 done

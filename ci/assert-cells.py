@@ -39,15 +39,27 @@ for scenario, (role, message) in CELLS.items():
         observed = ("found" if saw_message else "not found") + (f"; {done.group(1)}/{done.group(2)} threw, reachedLastTarget={done.group(3)}" if done else "; the process died before DONE")
         ok = saw_message and thrown >= MIN_THROWN
     elif role == "stuck":
-        final = re.search(r'C18 STUCK step="after ScaleXToAsync\(0\.8, 250\)" maui=(\S+) native=(\S+)', text)
-        expected = "the throw, then ScaleX stays NaN after ScaleX = 1 and ScaleXToAsync(0.8, 250), native stays 1"
-        observed = ("message found" if saw_message else "message not found") + (f"; final maui={final.group(1)} native={final.group(2)}" if final else "; no final STUCK line")
-        ok = saw_message and bool(final) and final.group(1) == "NaN" and float(final.group(2)) == 1.0
+        threw = re.search(r"C18 STUCKTHREW threwAt=(-?\d+)", text)
+        steps = {m.group(1): (m.group(2), m.group(3)) for m in re.finditer(r'C18 STUCK step="([^"]+)" maui=(\S+) native=(\S+)', text)}
+        expected = "a caught throw within 20 fresh boxes, then ScaleX stays NaN and native stays 1 after ScaleX = 0.3 and ScaleXToAsync(0.8, 250)"
+        observed = f"threwAt={threw.group(1)}" if threw else "no STUCKTHREW line"
+        ok = bool(threw) and int(threw.group(1)) >= 0 and saw_message
+        for step in ("after ScaleX = 0.3", "after ScaleXToAsync(0.8, 250)"):
+            values = steps.get(step)
+            observed += f"; {step}: maui={values[0]} native={values[1]}" if values else f"; {step}: missing"
+            ok = ok and values is not None and values[0] == "NaN" and float(values[1]) == 1.0
     elif role == "uncaught":
-        died = "FATAL EXCEPTION" in text
-        expected = "the process dies with the message and never logs DONE"
-        observed = ("FATAL EXCEPTION found" if died else "no FATAL EXCEPTION") + ("; message found" if saw_message else "; message not found") + ("; DONE logged, the process survived" if done else "")
-        ok = died and saw_message and not done
+        process_file = folder / "process.txt"
+        process = process_file.read_text().strip() if process_file.exists() else "unknown"
+        died = any(marker in text for marker in ("FATAL EXCEPTION", "Fatal signal")) or bool(re.search(r"ActivityManager.*has died", text)) or process == "gone"
+        iterations = len(re.findall(r"C18 ITER \d+ awaiting", text))
+        expected = "a length-0 call throws and the process dies"
+        if died and saw_message:
+            observed, ok = f"threw and the process died after {iterations} call(s)", True
+        elif saw_message:
+            observed, ok = f"threw but the process survived (process={process}); describe it as a throw, not a crash", False
+        else:
+            observed, ok = f"no throw in {iterations} call(s)" + ("; DONE logged" if done or "C18 DONE scenario=scalex0-uncaught" in text else ""), False
     else:
         expected = "no NaN message, every iteration clean, last target reached"
         observed = (f"{done.group(1)}/{done.group(2)} threw, reachedLastTarget={done.group(3)}" if done else "no 'C18 DONE' line") + ("; NaN message found" if saw_message else "")

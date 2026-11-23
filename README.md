@@ -2,7 +2,7 @@
 
 [Android] `ScaleXToAsync(x, 0)` and `ScaleYToAsync(x, 0)` throw `Java.Lang.IllegalArgumentException: Cannot set 'scaleX' to Float.NaN`, and the thrown exception leaves `ScaleX` stuck at `NaN`. The animation `Tweener` computes `0 / 0 = NaN` for a length of 0, and Android's `UpdateScaleX`/`UpdateScaleY` only guard a NaN `Scale`, not `ScaleX`/`ScaleY`.
 
-CI: (run link added after the first run)
+CI: https://github.com/TheCodeTraveler/maui-scalex-length-zero-repro/actions/runs/45235330873 (Android: 19 of 20 iterations threw for both `ScaleXToAsync` and `ScaleYToAsync`)
 Upstream issue: (to be filed)
 
 ## Reproduce locally
@@ -29,7 +29,8 @@ adb logcat -d | grep -i "Float.NaN"
 
 - Observed: `view.ScaleXToAsync(x, 0)` throws `Cannot set 'scaleX' to Float.NaN`, as does `ScaleYToAsync` (`scaleY`).
 - Observed after the throw: `ScaleX` stays `NaN` and every later `ScaleX = 1` or `ScaleXToAsync(0.8, 250)` on that element is silently dropped (native `scaleX` stays 1). The `scalex0-stuck` cell and the `stuck` probe leg log the MAUI and native values after each step.
-- Uncaught: the `scalex0-uncaught` cell awaits `ScaleXToAsync(0.5, 0)` in `Loaded` without `try/catch` and expects the process to die with the message before `DONE`.
+- Uncaught: the `scalex0-uncaught` cell warms up, then awaits `ScaleXToAsync(0.5, 0)` on up to 20 fresh boxes in `Loaded` without `try/catch`. The job summary says whether the process died, threw but survived, or never threw.
+- About 19 of 20: the very first length-0 calls in a cold process sometimes do not throw, because JIT and the first JNI callback let the millisecond clock tick over before the first step. Later calls throw almost always, so the stuck and uncaught cells retry on fresh boxes.
 - Expected: a length of 0 sets the target value without throwing.
 - `ScaleToAsync`, `RotateToAsync`, `FadeToAsync` and `TranslateToAsync` with length 0 write the same NaN frame. Nothing throws: MAUI skips a NaN `Scale`, and Android accepts a NaN rotation, alpha or translation.
 
@@ -50,8 +51,8 @@ adb logcat -d | grep -i "Float.NaN"
 | probe | `workaround` | workaround | `Math.Max(1, length)` writes no `NaN` |
 | probe | `stuck` | bug | a handler that throws on NaN leaves `ScaleX` at `NaN`; later sets and animations are dropped |
 | android (coreclr) | `scalex0`, `scaley0` | bug | 20 iterations, each on a fresh `BoxView`, of `ScaleXToAsync`/`ScaleYToAsync(x, 0)`; logcat has `Cannot set 'scaleX'` (or `'scaleY'`) `to Float.NaN` and at least 10 of 20 iterations throw |
-| android (coreclr) | `scalex0-stuck` | bug | one caught throw, then `ScaleX = 1` and `ScaleXToAsync(0.8, 250)`; MAUI `ScaleX` stays `NaN`, native stays 1 |
-| android (coreclr) | `scalex0-uncaught` | bug | no `try/catch`: the process dies with a `FATAL EXCEPTION` before `DONE` |
+| android (coreclr) | `scalex0-stuck` | bug | retries fresh boxes until one throw is caught, then `ScaleX = 0.3` and `ScaleXToAsync(0.8, 250)`; MAUI `ScaleX` stays `NaN`, native stays 1 (so the set was dropped) |
+| android (coreclr) | `scalex0-uncaught` | bug | warm-up, then up to 20 fresh boxes with no `try/catch`; passes only if a throw kills the process (`FATAL EXCEPTION`, `Fatal signal` or `has died`) |
 | android (coreclr) | `scale0`, `scalex250` | control | `ScaleToAsync(x, 0)` (has the NaN guard) and `ScaleXToAsync(x, 250)` throw 0 of 20 and reach the target |
 | android (coreclr) | `scalex0-workaround` | workaround | assigning `ScaleX` directly when the length is 0 throws 0 of 20 |
 
