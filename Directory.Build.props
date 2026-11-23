@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <ReproRuntime Condition="'$(ReproRuntime)' == ''">coreclr</ReproRuntime>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(ReproRuntime)' == 'coreclr'">
+    <UseMonoRuntime>false</UseMonoRuntime>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(ReproRuntime)' == 'mono'">
+    <UseMonoRuntime>true</UseMonoRuntime>
+  </PropertyGroup>
+</Project>

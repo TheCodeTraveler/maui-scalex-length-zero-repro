@@ -1,0 +1,105 @@
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Maui;
+using Microsoft.Maui.Animations;
+using Microsoft.Maui.Controls;
+using Microsoft.Maui.Dispatching;
+using Microsoft.Maui.Handlers;
+
+// Usage: dotnet run --project probe -- <bug|control|fix>
+// Exit code 0 means the leg observed what it expects (bug: NaN written; control and fix: no NaN written).
+var leg = args.SingleOrDefault() ?? throw new ArgumentException("Pass one leg: bug, control or fix.");
+DispatcherProvider.SetCurrent(new InlineDispatcherProvider());
+
+var checks = leg switch
+{
+	"bug" => new (string Name, bool ExpectNaN, Func<List<double>> Measure)[]
+	{
+		("ScaleXToAsync(2, length: 0)", true, () => Measure(v => v.ScaleXToAsync(2, 0), nameof(VisualElement.ScaleX), v => v.ScaleX)),
+		("ScaleYToAsync(2, length: 0)", true, () => Measure(v => v.ScaleYToAsync(2, 0), nameof(VisualElement.ScaleY), v => v.ScaleY)),
+	},
+	"control" => new (string, bool, Func<List<double>>)[]
+	{
+		("ScaleXToAsync(2, length: 1)", false, () => Measure(v => v.ScaleXToAsync(2, 1), nameof(VisualElement.ScaleX), v => v.ScaleX)),
+		("ScaleXToAsync(2, length: 250)", false, () => Measure(v => v.ScaleXToAsync(2, 250), nameof(VisualElement.ScaleX), v => v.ScaleX)),
+	},
+	// The user-code workaround: never let the length reach 0
+	"fix" => new (string, bool, Func<List<double>>)[]
+	{
+		("ScaleXToAsync(2, length: Math.Max(1, 0))", false, () => Measure(v => v.ScaleXToAsync(2, Math.Max(1u, 0u)), nameof(VisualElement.ScaleX), v => v.ScaleX)),
+		("ScaleYToAsync(2, length: Math.Max(1, 0))", false, () => Measure(v => v.ScaleYToAsync(2, Math.Max(1u, 0u)), nameof(VisualElement.ScaleY), v => v.ScaleY)),
+	},
+	_ => throw new ArgumentException($"Unknown leg '{leg}'."),
+};
+
+var rows = new List<object>();
+var allAsExpected = true;
+foreach (var (name, expectNaN, measure) in checks)
+{
+	var writes = measure();
+	var observedNaN = writes.Any(double.IsNaN);
+	var ok = writes.Count > 0 && observedNaN == expectNaN;
+	allAsExpected &= ok;
+	rows.Add(new { check = name, expected = expectNaN ? "a NaN write" : "no NaN write", observed = $"writes=[{string.Join(", ", writes)}]", ok });
+	Console.WriteLine($"C18 PROBE leg={leg} check=\"{name}\" writes=[{string.Join(", ", writes)}] containsNaN={observedNaN} expectNaN={expectNaN} ok={ok}");
+}
+
+Directory.CreateDirectory("results");
+File.WriteAllText($"results/probe-{leg}.json", JsonSerializer.Serialize(new { leg, ok = allAsExpected, rows }, new JsonSerializerOptions { WriteIndented = true }));
+Console.WriteLine($"C18 PROBE RESULT leg={leg} ok={allAsExpected}");
+return allAsExpected ? 0 : 1;
+
+static List<double> Measure(Func<VisualElement, Task<bool>> animate, string property, Func<VisualElement, double> read)
+{
+	var ticker = new FiresInsideStartTicker();
+	var services = new ServiceCollection()
+		.AddSingleton<IAnimationManager>(new AnimationManager(ticker))
+		.AddSingleton<IDispatcher>(new InlineDispatcher())
+		.BuildServiceProvider();
+	var handler = new ObjectViewHandler();
+	handler.SetMauiContext(new MauiContext(services));
+	var view = new BoxView();
+	view.Handler = handler;
+
+	var written = new List<double>();
+	view.PropertyChanged += (_, e) => { if (e.PropertyName == property) written.Add(read(view)); };
+
+	var task = animate(view);
+	var frames = 0;
+	while (!task.IsCompleted && frames++ < 100)
+	{
+		Thread.Sleep(16);
+		ticker.Fire?.Invoke();
+	}
+
+	return task.IsCompleted ? written : throw new InvalidOperationException("The animation never completed, so this leg proves nothing.");
+}
+
+// Mirrors Android's ValueAnimator.start(), which calls the update listener before it returns (AOSP ValueAnimator.java L1145-1158).
+sealed class FiresInsideStartTicker : ITicker
+{
+	public bool IsRunning { get; private set; }
+	public bool SystemEnabled => true;
+	public int MaxFps { get; set; } = 60;
+	public Action? Fire { get; set; }
+	public void Start() { IsRunning = true; Fire?.Invoke(); }
+	public void Stop() => IsRunning = false;
+}
+
+sealed class ObjectViewHandler() : ViewHandler<IView, object>(ViewMapper)
+{
+	protected override object CreatePlatformView() => new object();
+}
+
+sealed class InlineDispatcherProvider : IDispatcherProvider
+{
+	public IDispatcher GetForCurrentThread() => new InlineDispatcher();
+}
+
+sealed class InlineDispatcher : IDispatcher
+{
+	public bool IsDispatchRequired => false;
+	public bool Dispatch(Action action) { action(); return true; }
+	public bool DispatchDelayed(TimeSpan delay, Action action) { action(); return true; }
+	public IDispatcherTimer CreateTimer() => throw new NotSupportedException();
+}
