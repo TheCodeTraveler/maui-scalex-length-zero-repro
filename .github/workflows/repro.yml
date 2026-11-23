@@ -48,6 +48,9 @@ jobs:
             -   name: Run the workaround leg (length Math.Max(1, 0) must not write NaN)
                 run: dotnet run --no-build -c Release --project probe -- workaround | tee probe-workaround.log
 
+            -   name: Run the stuck leg (a throwing ScaleX handler leaves ScaleX stuck at NaN)
+                run: dotnet run --no-build -c Release --project probe -- stuck | tee probe-stuck.log
+
             -   name: Assert every probe leg and write the summary
                 if: always()
                 shell: bash
@@ -59,11 +62,11 @@ jobs:
                         echo '|---|---|---|---|'
                     } >> "$GITHUB_STEP_SUMMARY"
                     failed=0
-                    for leg in bug control workaround; do
+                    for leg in bug control workaround stuck; do
                         file="probe-$leg.log"
-                        case $leg in bug) expected='NaN is written first' ;; *) expected='no NaN is written' ;; esac
+                        case $leg in bug) expected='NaN is written first' ;; stuck) expected='after one throw ScaleX stays NaN and later sets are dropped' ;; *) expected='no NaN is written' ;; esac
                         if grep -q "C18 PROBE RESULT leg=$leg ok=True" "$file" 2>/dev/null; then result=PASS; else result=FAIL; failed=1; fi
-                        observed=$(grep -o 'nanFirst=[0-9]*/[0-9]*' "$file" 2>/dev/null | head -2 | paste -sd ' ' - || true)
+                        observed=$(grep -o 'nanFirst=[0-9]*/[0-9]*\|finalScaleX=[A-Za-z0-9.]* finalPlatformScaleX=[0-9.]*' "$file" 2>/dev/null | head -2 | paste -sd ' ' - || true)
                         echo "| $leg | $expected | ${observed:-no marker: the probe did not run} | $result |" >> "$GITHUB_STEP_SUMMARY"
                     done
                     exit $failed

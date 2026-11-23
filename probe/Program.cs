@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui;
@@ -6,8 +7,14 @@ using Microsoft.Maui.Controls;
 using Microsoft.Maui.Dispatching;
 using Microsoft.Maui.Handlers;
 
-var leg = args.SingleOrDefault() ?? throw new ArgumentException("Pass one leg: bug, control or workaround.");
+var leg = args.SingleOrDefault() ?? throw new ArgumentException("Pass one leg: bug, control, workaround or stuck.");
 DispatcherProvider.SetCurrent(new InlineDispatcherProvider());
+Console.WriteLine($"C18 PROBE controls={typeof(VisualElement).Assembly.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion} runtime={System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
+
+if (leg == "stuck")
+{
+	return RunStuckLeg();
+}
 
 var checks = leg switch
 {
@@ -58,6 +65,59 @@ Directory.CreateDirectory("results");
 File.WriteAllText($"results/probe-{leg}.json", JsonSerializer.Serialize(new { leg, ok = allAsExpected, rows }, new JsonSerializerOptions { WriteIndented = true }));
 Console.WriteLine($"C18 PROBE RESULT leg={leg} ok={allAsExpected}");
 return allAsExpected ? 0 : 1;
+
+// A handler that throws makes BindableObject.SetValueCore leave IsBeingSet set (no try/finally), so every later set of that property is queued forever.
+static int RunStuckLeg()
+{
+	var ticker = new FiresInsideStartTicker();
+	var services = new ServiceCollection()
+		.AddSingleton<IAnimationManager>(new AnimationManager(ticker))
+		.AddSingleton<IDispatcher>(new InlineDispatcher())
+		.BuildServiceProvider();
+	var handler = new ThrowsOnNaNScaleXHandler();
+	handler.SetMauiContext(new MauiContext(services));
+	var box = new BoxView { Handler = handler };
+
+	var threw = false;
+	try
+	{
+		var task = box.ScaleXToAsync(0.5, 0);
+		for (var frame = 0; frame < 5 && !task.IsCompleted; frame++)
+		{
+			Thread.Sleep(16);
+			ticker.Fire?.Invoke();
+		}
+	}
+	catch (ArgumentException ex)
+	{
+		threw = true;
+		Console.WriteLine($"C18 PROBE stuck step=throw message=\"{ex.Message}\"");
+	}
+
+	Console.WriteLine(Describe("after the throw", box, handler));
+	box.ScaleX = 1;
+	Console.WriteLine(Describe("after ScaleX = 1", box, handler));
+
+	var animation = box.ScaleXToAsync(0.8, 250);
+	for (var frame = 0; frame < 40 && !animation.IsCompleted; frame++)
+	{
+		Thread.Sleep(16);
+		ticker.Fire?.Invoke();
+	}
+
+	Console.WriteLine(Describe($"after ScaleXToAsync(0.8, 250) completed={animation.IsCompleted}", box, handler));
+	var finalScaleX = box.ScaleX;
+	var ok = threw && double.IsNaN(finalScaleX) && handler.PlatformScaleX == 1;
+	Console.WriteLine(FormattableString.Invariant($"C18 PROBE stuck finalScaleX={finalScaleX} finalPlatformScaleX={handler.PlatformScaleX}"));
+
+	Directory.CreateDirectory("results");
+	File.WriteAllText("results/probe-stuck.json", JsonSerializer.Serialize(new { leg = "stuck", ok, threw, finalScaleX = finalScaleX.ToString(System.Globalization.CultureInfo.InvariantCulture), finalPlatformScaleX = handler.PlatformScaleX }, new JsonSerializerOptions { WriteIndented = true }));
+	Console.WriteLine($"C18 PROBE RESULT leg=stuck ok={ok}");
+	return ok ? 0 : 1;
+}
+
+static string Describe(string step, BoxView box, ThrowsOnNaNScaleXHandler handler) =>
+	FormattableString.Invariant($"C18 PROBE stuck step=\"{step}\" maui={box.ScaleX} platform={handler.PlatformScaleX}");
 
 static List<double> Measure(Func<VisualElement, Task<bool>> animate, string property, Func<VisualElement, double> read)
 {
@@ -112,4 +172,22 @@ sealed class InlineDispatcher : IDispatcher
 	public bool Dispatch(Action action) { action(); return true; }
 	public bool DispatchDelayed(TimeSpan delay, Action action) { action(); return true; }
 	public IDispatcherTimer CreateTimer() => throw new NotSupportedException();
+}
+
+// Stands in for Android's View.setScaleX, which throws on NaN.
+sealed class ThrowsOnNaNScaleXHandler() : ViewHandler<IView, object>(new PropertyMapper<IView, ThrowsOnNaNScaleXHandler>(ViewMapper)
+{
+	[nameof(IView.ScaleX)] = (handler, view) =>
+	{
+		if (double.IsNaN(view.ScaleX))
+		{
+			throw new ArgumentException("Cannot set 'scaleX' to Float.NaN");
+		}
+
+		handler.PlatformScaleX = view.ScaleX;
+	},
+})
+{
+	public double PlatformScaleX { get; set; } = 1;
+	protected override object CreatePlatformView() => new object();
 }

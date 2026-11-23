@@ -12,7 +12,7 @@ adb logcat -G 16M
 apk=$(ls src/C18Repro/bin/Release/*/android-x64/*-Signed.apk | head -1)
 timeout 300 adb install -r "$apk" > "$artifacts/install.txt" 2>&1 || { sleep 10; timeout 300 adb install -r "$apk" > "$artifacts/install.txt" 2>&1; } || { echo "Install failed"; cat "$artifacts/install.txt"; exit 1; }
 
-for scenario in scalex0 scaley0 scale0 scalex250 scalex0-workaround; do
+for scenario in scalex0 scaley0 scale0 scalex250 scalex0-workaround scalex0-stuck scalex0-uncaught; do
     folder="$artifacts/$scenario"
     mkdir -p "$folder"
     adb logcat -c
