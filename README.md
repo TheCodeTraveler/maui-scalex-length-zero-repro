@@ -3,7 +3,7 @@
 [Android] `ScaleXToAsync(x, 0)` and `ScaleYToAsync(x, 0)` throw `Java.Lang.IllegalArgumentException: Cannot set 'scaleX' to Float.NaN`, Uncaught, it crashes the app; caught, it leaves `ScaleX` stuck at `NaN`. The animation `Tweener` computes `0 / 0 = NaN` for a length of 0, and Android's `UpdateScaleX`/`UpdateScaleY` only guard a NaN `Scale`, not `ScaleX`/`ScaleY`.
 
 CI: https://github.com/TheCodeTraveler/maui-scalex-length-zero-repro/actions/runs/45237670453 (Android: 19 of 20 `ScaleXToAsync` and 18 of 20 `ScaleYToAsync` calls threw; uncaught, the app crashed)
-Upstream issue: (to be filed)
+Upstream issue: https://github.com/dotnet/maui/issues/40684
 Related: dotnet/maui#40535 (`rate: 0` crashes in the same `Tweener.Step`), dotnet/maui#40683 (a throwing property write wedges the property)
 
 ## Reproduce locally
